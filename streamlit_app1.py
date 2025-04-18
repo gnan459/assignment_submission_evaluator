@@ -13,21 +13,40 @@ from google.auth.transport.requests import Request
 SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
 
 # --- AUTH ---
+# --- AUTH ---
 def google_drive_login():
     creds = None
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
+    token_path = "/tmp/token.pickle"
+
+    # Try to load token if exists
+    if os.path.exists(token_path):
+        with open(token_path, "rb") as token:
             creds = pickle.load(token)
 
+    # If no valid creds, initiate manual OAuth
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
-            creds = flow.run_console()
+            auth_url, _ = flow.authorization_url(prompt='consent')
 
-        with open("token.pickle", "wb") as token:
-            pickle.dump(creds, token)
+            st.warning("🔐 Authorization required. Please click the link below:")
+            st.markdown(f"[Click here to authorize access]({auth_url})", unsafe_allow_html=True)
+
+            auth_code = st.text_input("Paste the authorization code here:")
+
+            if not auth_code:
+                st.stop()
+
+            try:
+                flow.fetch_token(code=auth_code)
+                creds = flow.credentials
+                with open(token_path, "wb") as token:
+                    pickle.dump(creds, token)
+            except Exception as e:
+                st.error(f"Failed to authenticate: {e}")
+                st.stop()
 
     return build("drive", "v3", credentials=creds)
 
