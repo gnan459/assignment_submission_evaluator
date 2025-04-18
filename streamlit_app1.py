@@ -57,7 +57,9 @@ st.set_page_config(page_title="Google Drive Assignment Evaluator", layout="cente
 st.title("📂 Assignment Submission Evaluator")
 
 st.markdown("""
-Enter your Google Drive **Folder ID** to evaluate submissions for each student. You'll get file counts, last modified dates, and file lists.
+Enter your Google Drive **Folder ID** to evaluate student submissions.
+
+📁 Each folder is assumed to be named with the student's full name.
 """)
 
 folder_id = st.text_input("Enter the Folder ID (from Drive link)", "")
@@ -80,16 +82,15 @@ if folder_id:
                 files_info = get_files_info_in_folder(service, folder["id"])
                 files_count = len(files_info)
 
-                if files_info:
-                    last_modified = max(
+                last_modified = (
+                    max(
                         datetime.strptime(file["modifiedTime"], "%Y-%m-%dT%H:%M:%S.%fZ")
                         for file in files_info
-                    ).strftime("%Y-%m-%d %H:%M:%S")
-                else:
-                    last_modified = "N/A"
+                    ).strftime("%Y-%m-%d %H:%M:%S") if files_info else "N/A"
+                )
 
                 st.markdown(f"### 👨‍🎓 {student_name}")
-                st.markdown(f"- 🗃️ **Files Submitted:** {files_count}")
+                st.markdown(f"- 📁 **Files Submitted:** {files_count}")
                 st.markdown(f"- 🕒 **Last Modified:** {last_modified}")
 
                 for file in files_info:
@@ -98,12 +99,12 @@ if folder_id:
                     mime = file["mimeType"]
                     st.markdown(f"  - 📄 `{file_name}` _(Modified: {mod_time}, Type: {mime})_")
 
-                    # Add each file as a row in the report
                     data.append({
                         "Student Name": student_name,
                         "File Name": file_name,
                         "Last Modified": mod_time,
-                        "MIME Type": mime
+                        "MIME Type": mime,
+                        "Total Submissions": files_count
                     })
 
             if data:
