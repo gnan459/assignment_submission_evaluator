@@ -3,50 +3,31 @@ import pandas as pd
 import io
 import pickle
 import os
+from datetime import datetime
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
-
 # --- CONFIG ---
 SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
 
 # --- AUTH ---
-# --- AUTH ---
 def google_drive_login():
     creds = None
-    token_path = "/tmp/token.pickle"
-
-    # Try to load token if exists
-    if os.path.exists(token_path):
-        with open(token_path, "rb") as token:
+    if os.path.exists("token.pickle"):
+        with open("token.pickle", "rb") as token:
             creds = pickle.load(token)
 
-    # If no valid creds, initiate manual OAuth
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
-            auth_url, _ = flow.authorization_url(prompt='consent')
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            creds = flow.run_local_server(port=0)
 
-            st.warning("🔐 Authorization required. Please click the link below:")
-            st.markdown(f"[Click here to authorize access]({auth_url})", unsafe_allow_html=True)
-
-            auth_code = st.text_input("Paste the authorization code here:")
-
-            if not auth_code:
-                st.stop()
-
-            try:
-                flow.fetch_token(code=auth_code)
-                creds = flow.credentials
-                with open(token_path, "wb") as token:
-                    pickle.dump(creds, token)
-            except Exception as e:
-                st.error(f"Failed to authenticate: {e}")
-                st.stop()
+        with open("token.pickle", "wb") as token:
+            pickle.dump(creds, token)
 
     return build("drive", "v3", credentials=creds)
 
@@ -58,12 +39,12 @@ def get_subfolders(service, parent_id):
     ).execute()
     return results.get("files", [])
 
-def count_files_in_folder(service, folder_id):
+def get_files_info_in_folder(service, folder_id):
     results = service.files().list(
         q=f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed=false",
-        fields="files(id, name)"
+        fields="files(id, name, modifiedTime, mimeType)"
     ).execute()
-    return len(results.get("files", []))
+    return results.get("files", [])
 
 def to_excel_bytes(df):
     output = io.BytesIO()
@@ -76,7 +57,7 @@ st.set_page_config(page_title="Google Drive Assignment Evaluator", layout="cente
 st.title("📂 Assignment Submission Evaluator")
 
 st.markdown("""
-Upload your Google Drive **Students Folder ID**, and get a report of how many files each student submitted.
+Enter your Google Drive **Folder ID** to evaluate submissions for each student. You'll get file counts, last modified dates, and file lists.
 """)
 
 folder_id = st.text_input("Enter the Folder ID (from Drive link)", "")
@@ -93,21 +74,48 @@ if folder_id:
         else:
             data = []
             st.info(f"📁 Found {len(folders)} student folders.")
+
             for folder in folders:
                 student_name = folder["name"]
-                files_count = count_files_in_folder(service, folder["id"])
-                st.write(f"👨‍🎓 {student_name}: {files_count} files")
-                data.append({"Student Name": student_name, "Files Submitted": files_count})
+                files_info = get_files_info_in_folder(service, folder["id"])
+                files_count = len(files_info)
+
+                if files_info:
+                    last_modified = max(
+                        datetime.strptime(file["modifiedTime"], "%Y-%m-%dT%H:%M:%S.%fZ")
+                        for file in files_info
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    last_modified = "N/A"
+
+                st.markdown(f"### 👨‍🎓 {student_name}")
+                st.markdown(f"- 🗃️ **Files Submitted:** {files_count}")
+                st.markdown(f"- 🕒 **Last Modified:** {last_modified}")
+
+                for file in files_info:
+                    file_name = file["name"]
+                    mod_time = datetime.strptime(file["modifiedTime"], "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%Y-%m-%d %H:%M:%S")
+                    mime = file["mimeType"]
+                    st.markdown(f"  - 📄 `{file_name}` _(Modified: {mod_time}, Type: {mime})_")
+
+                    # Add each file as a row in the report
+                    data.append({
+                        "Student Name": student_name,
+                        "File Name": file_name,
+                        "Last Modified": mod_time,
+                        "MIME Type": mime
+                    })
 
             if data:
                 df = pd.DataFrame(data)
+                st.markdown("### 📊 Submission Summary")
                 st.dataframe(df)
 
                 excel_bytes = to_excel_bytes(df)
                 st.download_button(
                     label="📥 Download Excel Report",
                     data=excel_bytes,
-                    file_name="submission_report.xlsx",
+                    file_name="detailed_submission_report.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             else:
